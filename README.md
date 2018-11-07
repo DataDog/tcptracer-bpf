@@ -55,3 +55,16 @@ If you have any questions about, feedback for or problems with `tcptracer-bpf`:
 - <a href="https://github.com/weaveworks/tcptracer-bpf/issues/new">File an issue.</a>
 
 Your feedback is always welcome!
+
+
+## Development
+
+The easiest way to build and test is inside a Vagrant VM.  You can provision
+the VM by running `./tools/dev_setup.sh` and SSHing into the VM with `vagrant
+ssh` (`vagrant` must be installed.)
+
+The VM will mount your local `$GOPATH`, so you can edit source code with your editor of choice.
+
+`make run-nettop` will run a small testing program which
+periodically prints statistics about TCP/UDP traffic inside the VM.
+

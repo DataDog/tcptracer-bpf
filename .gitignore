@@ -4,3 +4,4 @@ weaveworks-tcptracer-bpf-ci-latest.aci
 .vscode
 nettracer
 network-tracer
+Vagrantfile

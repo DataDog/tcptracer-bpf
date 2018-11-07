@@ -9,32 +9,6 @@ DOCKER_IMAGE?=datadog/tcptracer-bpf-builder
 # If you can use docker without being root, you can do "make SUDO="
 SUDO=$(shell docker info >/dev/null 2>&1 || echo "sudo -E")
 
-# Agent configuration variables
-NS = main
-COMMIT = $(shell git rev-parse --short HEAD)
-BRANCH = $(shell git rev-parse --abbrev-ref HEAD)
-DATE = $(shell date +%FT%T%z)
-GO_VER = $(shell go version)
-# If not set, set AGENT_VERSION to 0.99.0
-AGENT_VERSION ?= 0.99.0
-
-# Go build parameters
-GO_TAGS = linux_bpf
-
-LDFLAGS = -X '$(NS).Version=$(AGENT_VERSION)'
-LDFLAGS += -X '$(NS).BuildDate=$(DATE)'
-LDFLAGS += -X '$(NS).GitCommit=$(COMMIT)'
-LDFLAGS += -X '$(NS).GitBranch=$(BRANCH)'
-LDFLAGS += -X '$(NS).GoVersion=$(GO_VER)'
-
-# Optionally allow static builds
-ifeq ($(NETWORK_AGENT_STATIC), true)
-	# Required because of getaddrinfo
-	GO_TAGS += netgo
-	LDFLAGS += -linkmode external -extldflags '-static'
-	# CC = '/usr/local/musl/bin/musl-gcc' # TODO: Get musl-based static builds working for network-tracer
-endif
-
 # Generate and install eBPF program via gobindata
 all: build-docker-image build-ebpf-object install-generated-go
 
@@ -71,15 +45,6 @@ run-nettop:
 		--privileged \
 		-v /sys/kernel/debug:/sys/kernel/debug \
 		tcptracer-bpf-dd-nettop
-
-# Build network-tracer agent: runs eBPF program and exposes connections via /connections over UDS
-build-agent:
-	go build -a -o network-tracer -tags '$(GO_TAGS)' -ldflags "$(LDFLAGS)" github.com/DataDog/tcptracer-bpf/agent
-
-# easyjson code generation
-codegen:
-	go get -u github.com/mailru/easyjson
-	easyjson pkg/tracer/event_common.go
 
 test:
 	go list ./... | grep -v vendor | sudo -E PATH=${PATH} GOCACHE=off xargs go test -tags 'linux_bpf'

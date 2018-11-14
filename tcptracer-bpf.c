@@ -50,24 +50,24 @@ struct bpf_map_def SEC("maps/udp_stats_ipv6") udp_stats_ipv6 = {
 };
 
 /* This is a key/value store with the keys being an ipv4_tuple_t for send & recv calls
- * and the values being the struct conn_stats_t *.
+ * and the values being the struct conn_stats_ts_t *.
  */
 struct bpf_map_def SEC("maps/tcp_stats_ipv4") tcp_stats_ipv4 = {
 	.type = BPF_MAP_TYPE_HASH,
 	.key_size = sizeof(struct ipv4_tuple_t),
-	.value_size = sizeof(struct conn_stats_t),
+	.value_size = sizeof(struct conn_stats_ts_t),
 	.max_entries = 32768,
 	.pinning = 0,
 	.namespace = "",
 };
 
 /* This is a key/value store with the keys being an ipv6_tuple_t for send & recv calls
- * and the values being the struct conn_stats_t *.
+ * and the values being the struct conn_stats_ts_t *.
  */
 struct bpf_map_def SEC("maps/tcp_stats_ipv6") tcp_stats_ipv6 = {
 	.type = BPF_MAP_TYPE_HASH,
 	.key_size = sizeof(struct ipv6_tuple_t),
-	.value_size = sizeof(struct conn_stats_t),
+	.value_size = sizeof(struct conn_stats_ts_t),
 	.max_entries = 32768,
 	.pinning = 0,
 	.namespace = "",
@@ -437,9 +437,10 @@ static int read_ipv6_tuple(struct ipv6_tuple_t *tuple, struct tcptracer_status_t
 
 __attribute__((always_inline))
 static int increment_tcp_stats(struct sock *sk, struct tcptracer_status_t *status, size_t send_bytes, size_t recv_bytes) {
-	struct conn_stats_t *val;
+	struct conn_stats_ts_t *val;
 
 	u64 pid = bpf_get_current_pid_tgid();
+	u64 ts = bpf_ktime_get_ns();
 
 	if (check_family(sk, status, AF_INET)) {
 		if (!are_offsets_ready_v4(status, sk, pid)) {
@@ -459,10 +460,12 @@ static int increment_tcp_stats(struct sock *sk, struct tcptracer_status_t *statu
 		if (val != NULL) { // If already in our map, increment size in-place
 			(*val).send_bytes += send_bytes;
 			(*val).recv_bytes += recv_bytes;
+			(*val).timestamp  = ts;
 		} else { // Otherwise add the key, value to the map
-			struct conn_stats_t s = {
+			struct conn_stats_ts_t s = {
 				.send_bytes = send_bytes,
 				.recv_bytes = recv_bytes,
+				.timestamp = ts,
 			};
 			bpf_map_update_elem(&tcp_stats_ipv4, &t, &s, BPF_ANY);
 		}
@@ -491,10 +494,12 @@ static int increment_tcp_stats(struct sock *sk, struct tcptracer_status_t *statu
 			if (val != NULL) { // If already in our map, increment size in-place
 				(*val).send_bytes += send_bytes;
 				(*val).recv_bytes += recv_bytes;
+				(*val).timestamp = ts;
 			} else { // Otherwise add the key, value to the map
-				struct conn_stats_t s = {
+				struct conn_stats_ts_t s = {
 					.send_bytes = send_bytes,
 					.recv_bytes = recv_bytes,
+					.timestamp = ts,
 				};
 				bpf_map_update_elem(&tcp_stats_ipv4, &t2, &s, BPF_ANY);
 			}
@@ -508,15 +513,22 @@ static int increment_tcp_stats(struct sock *sk, struct tcptracer_status_t *statu
 			if (val != NULL) {
 				(*val).send_bytes += send_bytes;
 				(*val).recv_bytes += recv_bytes;
+				(*val).timestamp = ts;
 			} else { // Otherwise add the key, value to the map
-				struct conn_stats_t s = {
+				struct conn_stats_ts_t s = {
 					.send_bytes = send_bytes,
 					.recv_bytes = recv_bytes,
+					.timestamp = ts,
 				};
 				bpf_map_update_elem(&tcp_stats_ipv6, &t, &s, BPF_ANY);
 			}
 		}
 	}
+
+	// Update latest timestamp that we've seen - for connection expiration tracking
+	u64 zero = 0;
+	bpf_map_update_elem(&latest_ts, &zero, &ts, BPF_ANY);
+
 	return 0;
 }
 
@@ -615,7 +627,7 @@ static int increment_udp_stats(struct sock *sk,
 		}
 	}
 
-	// Update latest timestamp that we've seen - for UDP connection expiration tracking
+	// Update latest timestamp that we've seen - for connection expiration tracking
 	bpf_map_update_elem(&latest_ts, &zero, &ts, BPF_ANY);
 
 	return 0;

@@ -19,11 +19,6 @@ struct proc_t {
     char comm[TASK_COMM_LEN];
 };
 
-struct conn_stats_t {
-	__u64 send_bytes;
-	__u64 recv_bytes;
-};
-
 struct conn_stats_ts_t {
 	__u64 send_bytes;
 	__u64 recv_bytes;

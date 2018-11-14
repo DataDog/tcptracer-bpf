@@ -75,7 +75,7 @@ func (cs *ConnStatsWithTimestamp) isExpired(latestTime int64, timeout int64) boo
 	return latestTime-int64(cs.timestamp) > timeout
 }
 
-func connStatsFromTCPv4(t *ConnTupleV4, s *ConnStats) ConnectionStats {
+func connStatsFromTCPv4(t *ConnTupleV4, s *ConnStatsWithTimestamp) ConnectionStats {
 	return ConnectionStats{
 		Pid:       uint32(t.pid),
 		Type:      TCP,
@@ -89,7 +89,7 @@ func connStatsFromTCPv4(t *ConnTupleV4, s *ConnStats) ConnectionStats {
 	}
 }
 
-func connStatsFromTCPv6(t *ConnTupleV6, s *ConnStats) ConnectionStats {
+func connStatsFromTCPv6(t *ConnTupleV6, s *ConnStatsWithTimestamp) ConnectionStats {
 	return ConnectionStats{
 		Pid:       uint32(t.pid),
 		Type:      TCP,

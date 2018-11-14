@@ -128,14 +128,12 @@ func (t *Tracer) getUDPv4Connections() ([]ConnectionStats, error) {
 		return nil, err
 	}
 
-	tsMp, err := t.getMap(latestTimestampMapName)
+	latestTime, ok, err := t.getLatestTimestamp()
 	if err != nil {
 		return nil, err
 	}
 
-	var latestTime int64
-	err = t.m.LookupElement(tsMp, unsafe.Pointer(&zero), unsafe.Pointer(&latestTime))
-	if err != nil { // If we can't find latest timestamp, there probably hasn't been any UDP messages yet
+	if !ok { // if we haven't yet captured any timestamps, there can be no UDP packets
 		return nil, nil
 	}
 
@@ -168,14 +166,12 @@ func (t *Tracer) getUDPv6Connections() ([]ConnectionStats, error) {
 		return nil, err
 	}
 
-	tsMp, err := t.getMap(latestTimestampMapName)
+	latestTime, ok, err := t.getLatestTimestamp()
 	if err != nil {
 		return nil, err
 	}
 
-	var latestTime int64
-	err = t.m.LookupElement(tsMp, unsafe.Pointer(&zero), unsafe.Pointer(&latestTime))
-	if err != nil { // If we can't find latest timestamp, there probably hasn't been any UDP messages yet
+	if !ok { // if no timestamps have been captured there can be no UDP packets
 		return nil, nil
 	}
 
@@ -208,17 +204,35 @@ func (t *Tracer) getTCPv4Connections() ([]ConnectionStats, error) {
 		return nil, err
 	}
 
+	latestTime, ok, err := t.getLatestTimestamp()
+	if err != nil {
+		return nil, err
+	}
+
+	if !ok { // if no timestamps have been captured, there can be no TCP packets
+		return nil, nil
+	}
+
 	// Iterate through all key-value pairs in map
-	key, nextKey, val := &ConnTupleV4{}, &ConnTupleV4{}, &ConnStats{}
+	key, nextKey, val := &ConnTupleV4{}, &ConnTupleV4{}, &ConnStatsWithTimestamp{}
 	conns := make([]ConnectionStats, 0)
+	var expired []unsafe.Pointer
 	for {
 		hasNext, _ := t.m.LookupNextElement(mp, unsafe.Pointer(key), unsafe.Pointer(nextKey), unsafe.Pointer(val))
 		if !hasNext {
 			break
 		} else {
-			conns = append(conns, connStatsFromTCPv4(nextKey, val))
+			if val.isExpired(latestTime, t.config.TCPConnTimeout.Nanoseconds()) {
+				expired = append(expired, unsafe.Pointer(val))
+			} else {
+				conns = append(conns, connStatsFromTCPv4(nextKey, val))
+			}
 			key = nextKey
 		}
+	}
+
+	for _, ptr := range expired {
+		t.m.DeleteElement(mp, ptr)
 	}
 	return conns, nil
 }
@@ -229,20 +243,57 @@ func (t *Tracer) getTCPv6Connections() ([]ConnectionStats, error) {
 		return nil, err
 	}
 
+	latestTime, ok, err := t.getLatestTimestamp()
+	if err != nil {
+		return nil, err
+	}
+
+	if !ok { // if no timestamps have been captured, there can be no TCP packets
+		return nil, nil
+	}
+
 	// Iterate through all key-value pairs in map
-	key, nextKey, val := &ConnTupleV6{}, &ConnTupleV6{}, &ConnStats{}
+	key, nextKey, val := &ConnTupleV6{}, &ConnTupleV6{}, &ConnStatsWithTimestamp{}
 	conns := make([]ConnectionStats, 0)
+	expired := make([]*ConnTupleV6, 0)
 	for {
 		hasNext, _ := t.m.LookupNextElement(mp, unsafe.Pointer(key), unsafe.Pointer(nextKey), unsafe.Pointer(val))
 		if !hasNext {
 			break
 		} else {
-			conns = append(conns, connStatsFromTCPv6(nextKey, val))
+			if val.isExpired(latestTime, t.config.TCPConnTimeout.Nanoseconds()) {
+				expired = append(expired, nextKey.copy())
+			} else {
+				conns = append(conns, connStatsFromTCPv6(nextKey, val))
+			}
 			key = nextKey
 		}
 	}
 
+	for _, expiredTuple := range expired {
+		t.m.DeleteElement(mp, unsafe.Pointer(expiredTuple))
+	}
+
 	return conns, nil
+}
+
+// getLatestTimestamp reads the most recent timestamp captured by the eBPF
+// module.  if the eBFP module has not yet captured a timestamp (as will be the
+// case if the eBPF module has just started), the second return value will be
+// false.
+func (t *Tracer) getLatestTimestamp() (int64, bool, error) {
+	tsMp, err := t.getMap(latestTimestampMapName)
+	if err != nil {
+		return 0, false, err
+	}
+
+	var latestTime int64
+	if err := t.m.LookupElement(tsMp, unsafe.Pointer(&zero), unsafe.Pointer(&latestTime)); err != nil {
+		// If we can't find latest timestamp, there probably haven't been any messages yet
+		return 0, false, nil
+	}
+
+	return latestTime, true, nil
 }
 
 func (t *Tracer) getMap(mapName string) (*bpflib.Map, error) {

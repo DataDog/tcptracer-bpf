@@ -24,7 +24,6 @@ type Config struct {
 	TCPConnTimeout time.Duration
 }
 
-
 // NewDefaultConfig enables traffic collection for all connection types
 func NewDefaultConfig() *Config {
 	return &Config{
@@ -34,4 +33,33 @@ func NewDefaultConfig() *Config {
 		UDPConnTimeout:       30 * time.Second,
 		TCPConnTimeout:       10 * time.Minute,
 	}
+}
+
+// EnabledKProbes returns a map of kprobes that are enabled per config settings
+func (c *Config) EnabledKProbes() map[KProbeName]struct{} {
+	enabled := make(map[KProbeName]struct{}, 0)
+
+	// Note: TCPv4Connect & TCPv4ConnectReturn are always included as they're needed for initialization
+	// and can be disabled after field offset guessing has completed.
+	enabled[TCPv4Connect] = struct{}{}
+	enabled[TCPv4ConnectReturn] = struct{}{}
+
+	if c.CollectTCPConns {
+		enabled[TCPSendMsg] = struct{}{}
+		enabled[TCPCleanupRBuf] = struct{}{}
+		enabled[TCPClose] = struct{}{}
+	}
+
+	if c.CollectUDPConns {
+		enabled[UDPRecvMsgReturn] = struct{}{}
+		enabled[UDPRecvMsg] = struct{}{}
+		enabled[UDPSendMsg] = struct{}{}
+	}
+
+	if c.TraceIPv6Connections {
+		enabled[TCPv6Connect] = struct{}{}
+		enabled[TCPv6ConnectReturn] = struct{}{}
+	}
+
+	return enabled
 }

@@ -2,6 +2,8 @@
 ebpf/
 weaveworks-tcptracer-bpf-ci-latest.aci
 .vscode
+.idea/
+.DS_Store
 nettracer
 network-tracer
 Vagrantfile

@@ -27,7 +27,7 @@ var (
 
 func TestTCPSendAndReceive(t *testing.T) {
 	// Enable BPF-based network tracer
-	tr, err := NewTracer(DefaultConfig)
+	tr, err := NewTracer(NewDefaultConfig())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -74,7 +74,7 @@ func TestTCPSendAndReceive(t *testing.T) {
 
 func TestTCPClosedConnectionsAreCleanedUp(t *testing.T) {
 	// Enable BPF-based network tracer
-	tr, err := NewTracer(DefaultConfig)
+	tr, err := NewTracer(NewDefaultConfig())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -121,7 +121,7 @@ func TestTCPClosedConnectionsAreCleanedUp(t *testing.T) {
 
 func TestUDPSendAndReceive(t *testing.T) {
 	// Enable BPF-based network tracer
-	tr, err := NewTracer(DefaultConfig)
+	tr, err := NewTracer(NewDefaultConfig())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -186,7 +186,7 @@ func BenchmarkUDPEcho(b *testing.B) {
 	runBenchtests(b, payloadSizesUDP, "", benchEchoUDP)
 
 	// Enable BPF-based network tracer
-	t, err := NewTracer(DefaultConfig)
+	t, err := NewTracer(NewDefaultConfig())
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -236,7 +236,7 @@ func BenchmarkTCPEcho(b *testing.B) {
 	runBenchtests(b, payloadSizesTCP, "", benchEchoTCP)
 
 	// Enable BPF-based network tracer
-	t, err := NewTracer(DefaultConfig)
+	t, err := NewTracer(NewDefaultConfig())
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -250,7 +250,7 @@ func BenchmarkTCPSend(b *testing.B) {
 	runBenchtests(b, payloadSizesTCP, "", benchSendTCP)
 
 	// Enable BPF-based network tracer
-	t, err := NewTracer(DefaultConfig)
+	t, err := NewTracer(NewDefaultConfig())
 	if err != nil {
 		b.Fatal(err)
 	}

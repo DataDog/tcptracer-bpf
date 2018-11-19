@@ -78,7 +78,7 @@ func NewTracer(config *Config) (*Tracer, error) {
 		return nil, err
 	}
 
-	if err := initialize(m); err != nil {
+	if err := initialize(m, config); err != nil {
 		return nil, fmt.Errorf("failed to init module: %s", err)
 	}
 
@@ -304,8 +304,8 @@ func (t *Tracer) getMap(mapName string) (*bpflib.Map, error) {
 	return mp, nil
 }
 
-func initialize(m *bpflib.Module) error {
-	if err := guess(m); err != nil {
+func initialize(m *bpflib.Module, cfg *Config) error {
+	if err := guess(m, cfg); err != nil {
 		return fmt.Errorf("error guessing offsets: %v", err)
 	}
 	return nil

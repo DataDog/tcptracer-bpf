@@ -174,18 +174,26 @@ func generateRandomIPv6Address() (addr [4]uint32) {
 // tcp_v{4,6}_connect kprobes get triggered and save the value at the current
 // offset in the eBPF map
 func tryCurrentOffset(status *tcpTracerStatus, expected *fieldValues, stop chan struct{}) error {
-	// for ipv6, we don't need the source port because we already guessed
-	// it doing ipv4 connections so we use a random destination address and
-	// try to connect to it
-	expected.daddrIPv6 = generateRandomIPv6Address()
+	// Are we guessing the IPv6 field?
+	if status.what == guessDaddrIPv6 {
+		expected.daddrIPv6 = generateRandomIPv6Address()
 
-	ip := ipv6FromUint32Arr(expected.daddrIPv6)
+		// For ipv6, we don't need the source port because we already guessed it doing ipv4 connections so
+		// we use a random destination address and try to connect to it.
+		expected.daddrIPv6 = generateRandomIPv6Address()
+		bindAddress := fmt.Sprintf("[%s]:9092", ipv6FromUint32Arr(expected.daddrIPv6))
 
-	bindAddress := fmt.Sprintf("%s:%d", listenIP, expected.dport)
-	if status.what != guessDaddrIPv6 {
-		// signal the server that we're about to connect, this will block until
-		// the channel is free so we don't overload the server
+		// Since we connect to a random IP, this will most likely fail. In the unlikely case where it connects
+		// successfully, we close the connection to avoid a leak.
+		if conn, err := net.DialTimeout("tcp6", bindAddress, 10*time.Millisecond); err == nil {
+			conn.Close()
+		}
+	} else { // Otherwise it must be source-able from the IPv4 fields
+		// Signal the server that we're about to connect, this will block until the channel is free so we don't
+		// overload the server
 		stop <- struct{}{}
+
+		bindAddress := fmt.Sprintf("%s:%d", listenIP, expected.dport)
 		conn, err := net.Dial("tcp4", bindAddress)
 		if err != nil {
 			return fmt.Errorf("error dialing %q: %v", bindAddress, err)
@@ -199,10 +207,8 @@ func tryCurrentOffset(status *tcpTracerStatus, expected *fieldValues, stop chan 
 
 		expected.sport = uint16(sport)
 
-		// set SO_LINGER to 0 so the connection state after closing is
-		// CLOSE instead of TIME_WAIT. In this way, they will disappear
-		// from the conntrack table after around 10 seconds instead of 2
-		// minutes
+		// Set SO_LINGER to 0 so the connection state after closing is CLOSE instead of TIME_WAIT.
+		// In this way, they will disappear from the conntrack table after around 10 seconds instead of 2 mins
 		if tcpConn, ok := conn.(*net.TCPConn); ok {
 			tcpConn.SetLinger(0)
 		} else {
@@ -210,14 +216,6 @@ func tryCurrentOffset(status *tcpTracerStatus, expected *fieldValues, stop chan 
 		}
 
 		conn.Close()
-	} else {
-		conn, err := net.DialTimeout("tcp6", fmt.Sprintf("[%s]:9092", ip), 10*time.Millisecond)
-		// Since we connect to a random IP, this will most likely fail.
-		// In the unlikely case where it connects successfully, we close
-		// the connection to avoid a leak.
-		if err == nil {
-			conn.Close()
-		}
 	}
 
 	return nil
@@ -332,7 +330,7 @@ func checkAndUpdateCurrentOffset(module *elf.Module, mp *elf.Map, status *tcpTra
 // check that value against the expected value of the field, advancing the
 // offset and repeating the process until we find the value we expect. Then, we
 // guess the next field.
-func guess(b *elf.Module) error {
+func guess(b *elf.Module, cfg *Config) error {
 	currentNetns, err := ownNetNS()
 	if err != nil {
 		return fmt.Errorf("error getting current netns: %v", err)
@@ -389,13 +387,17 @@ func guess(b *elf.Module) error {
 		family: syscall.AF_INET,
 	}
 
-	// if the kretprobe for tcp_v4_connect() is configured with a too-low
-	// maxactive, some kretprobe might be missing. In this case, we detect
-	// it and try again.
-	// See https://github.com/weaveworks/tcptracer-bpf/issues/24
-	var maxRetries int = 100
+	// If the kretprobe for tcp_v4_connect() is configured with a too-low maxactive, some kretprobe might be missing.
+	// In this case, we detect it and try again. See: https://github.com/weaveworks/tcptracer-bpf/issues/24
+	maxRetries := 100
 
 	for status.state != stateReady {
+		// If IPv6 is not enabled, then set state to ready as its the last field we guess
+		if !cfg.TraceIPv6Connections && status.what == guessDaddrIPv6 {
+			status.state = stateReady
+			continue
+		}
+
 		if err := tryCurrentOffset(status, expected, stop); err != nil {
 			return err
 		}
@@ -414,6 +416,5 @@ func guess(b *elf.Module) error {
 			return fmt.Errorf("overflow while guessing %v, bailing out", whatString[status.what])
 		}
 	}
-
 	return nil
 }

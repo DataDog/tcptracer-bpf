@@ -9,8 +9,8 @@ type Config struct {
 	// CollectUDPConns specifies whether the tracer should collect traffic statistics for UDP connections
 	CollectUDPConns bool
 
-	// TraceIPv6Connections specifics whether the tracer should capture traffic for IPv6 TCP/UDP connections
-	TraceIPv6Connections bool
+	// CollectIPv6Conns specifics whether the tracer should capture traffic for IPv6 TCP/UDP connections
+	CollectIPv6Conns bool
 
 	// UDPConnTimeout determines the length of traffic inactivity between two (IP, port)-pairs before declaring a UDP
 	// connection as inactive.
@@ -27,11 +27,11 @@ type Config struct {
 // NewDefaultConfig enables traffic collection for all connection types
 func NewDefaultConfig() *Config {
 	return &Config{
-		CollectTCPConns:      true,
-		CollectUDPConns:      true,
-		TraceIPv6Connections: isIPv6EnabledOnHost(),
-		UDPConnTimeout:       30 * time.Second,
-		TCPConnTimeout:       10 * time.Minute,
+		CollectTCPConns:  true,
+		CollectUDPConns:  true,
+		CollectIPv6Conns: true,
+		UDPConnTimeout:   30 * time.Second,
+		TCPConnTimeout:   10 * time.Minute,
 	}
 }
 
@@ -56,7 +56,7 @@ func (c *Config) EnabledKProbes() map[KProbeName]struct{} {
 		enabled[UDPSendMsg] = struct{}{}
 	}
 
-	if c.TraceIPv6Connections {
+	if c.CollectIPv6Conns {
 		enabled[TCPv6Connect] = struct{}{}
 		enabled[TCPv6ConnectReturn] = struct{}{}
 	}

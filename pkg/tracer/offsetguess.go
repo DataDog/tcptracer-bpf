@@ -372,7 +372,7 @@ func guess(m *elf.Module, cfg *Config) error {
 			return enableV6
 		}
 		return disableV6
-	}(cfg.TraceIPv6Connections)
+	}(cfg.CollectIPv6Conns)
 
 	status := &tcpTracerStatus{
 		state:        stateChecking,
@@ -415,7 +415,7 @@ func guess(m *elf.Module, cfg *Config) error {
 
 	for status.state != stateReady {
 		// If IPv6 is not enabled, then set state to ready as its the last field we guess
-		if status.what == guessDaddrIPv6 && !cfg.TraceIPv6Connections {
+		if status.what == guessDaddrIPv6 && !cfg.CollectIPv6Conns {
 			if err := setReadyState(m, mp, status); err != nil {
 				return err
 			}

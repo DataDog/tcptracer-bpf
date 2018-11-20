@@ -101,7 +101,7 @@ func (t *Tracer) GetActiveConnections() (*Connections, error) {
 			return nil, err
 		}
 
-		if t.config.TraceIPv6Connections {
+		if t.config.CollectIPv6Conns {
 			v6, err := t.getTCPv6Connections()
 			if err != nil {
 				return nil, err
@@ -118,7 +118,7 @@ func (t *Tracer) GetActiveConnections() (*Connections, error) {
 			return nil, err
 		}
 
-		if t.config.TraceIPv6Connections {
+		if t.config.CollectIPv6Conns {
 			v6, err := t.getUDPv6Connections()
 			if err != nil {
 				return nil, err

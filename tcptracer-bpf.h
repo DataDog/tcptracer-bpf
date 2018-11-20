@@ -54,6 +54,9 @@ struct ipv6_tuple_t {
 #define TCPTRACER_STATE_CHECKED       2
 #define TCPTRACER_STATE_READY         3
 
+#define TCPTRACER_IPV6_DISABLED 0
+#define TCPTRACER_IPV6_ENABLED  1
+
 struct tcptracer_status_t {
 	__u64 state;
 
@@ -78,7 +81,9 @@ struct tcptracer_status_t {
 	__u16 sport;
 	__u16 dport;
 	__u16 family;
-	__u16 padding;
+
+	__u8 ipv6_enabled;
+	__u8 padding;
 };
 
 #endif

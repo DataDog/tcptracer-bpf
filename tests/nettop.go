@@ -25,7 +25,10 @@ func main() {
 		os.Exit(1)
 	}
 
-	t, err := tracer.NewTracer(tracer.DefaultConfig)
+	cfg := tracer.NewDefaultConfig()
+	fmt.Printf("-- Config: %+v --\n", cfg)
+
+	t, err := tracer.NewTracer(cfg)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "%v\n", err)
 		os.Exit(1)

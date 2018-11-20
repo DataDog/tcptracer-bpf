@@ -5,8 +5,12 @@ import "time"
 type Config struct {
 	// CollectTCPConns specifies whether the tracer should collect traffic statistics for TCP connections
 	CollectTCPConns bool
+
 	// CollectUDPConns specifies whether the tracer should collect traffic statistics for UDP connections
 	CollectUDPConns bool
+
+	// CollectIPv6Conns specifics whether the tracer should capture traffic for IPv6 TCP/UDP connections
+	CollectIPv6Conns bool
 
 	// UDPConnTimeout determines the length of traffic inactivity between two (IP, port)-pairs before declaring a UDP
 	// connection as inactive.
@@ -20,10 +24,42 @@ type Config struct {
 	TCPConnTimeout time.Duration
 }
 
-// DefaultConfig enables traffic collection for all connection types
-var DefaultConfig = &Config{
-	CollectTCPConns: true,
-	CollectUDPConns: true,
-	UDPConnTimeout:  30 * time.Second,
-	TCPConnTimeout:  10 * time.Minute,
+// NewDefaultConfig enables traffic collection for all connection types
+func NewDefaultConfig() *Config {
+	return &Config{
+		CollectTCPConns:  true,
+		CollectUDPConns:  true,
+		CollectIPv6Conns: true,
+		UDPConnTimeout:   30 * time.Second,
+		TCPConnTimeout:   10 * time.Minute,
+	}
+}
+
+// EnabledKProbes returns a map of kprobes that are enabled per config settings
+func (c *Config) EnabledKProbes() map[KProbeName]struct{} {
+	enabled := make(map[KProbeName]struct{}, 0)
+
+	// Note: TCPv4Connect & TCPv4ConnectReturn are always included as they're needed for initialization
+	// and can be disabled after field offset guessing has completed.
+	enabled[TCPv4Connect] = struct{}{}
+	enabled[TCPv4ConnectReturn] = struct{}{}
+
+	if c.CollectTCPConns {
+		enabled[TCPSendMsg] = struct{}{}
+		enabled[TCPCleanupRBuf] = struct{}{}
+		enabled[TCPClose] = struct{}{}
+	}
+
+	if c.CollectUDPConns {
+		enabled[UDPRecvMsgReturn] = struct{}{}
+		enabled[UDPRecvMsg] = struct{}{}
+		enabled[UDPSendMsg] = struct{}{}
+	}
+
+	if c.CollectIPv6Conns {
+		enabled[TCPv6Connect] = struct{}{}
+		enabled[TCPv6ConnectReturn] = struct{}{}
+	}
+
+	return enabled
 }

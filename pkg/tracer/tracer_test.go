@@ -14,8 +14,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stretchr/testify/assert"
 	"os"
+
+	"github.com/stretchr/testify/assert"
 )
 
 var (
@@ -27,7 +28,7 @@ var (
 
 func TestTCPSendAndReceive(t *testing.T) {
 	// Enable BPF-based network tracer
-	tr, err := NewTracer(DefaultConfig)
+	tr, err := NewTracer(NewDefaultConfig())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -74,7 +75,7 @@ func TestTCPSendAndReceive(t *testing.T) {
 
 func TestTCPClosedConnectionsAreCleanedUp(t *testing.T) {
 	// Enable BPF-based network tracer
-	tr, err := NewTracer(DefaultConfig)
+	tr, err := NewTracer(NewDefaultConfig())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -119,9 +120,56 @@ func TestTCPClosedConnectionsAreCleanedUp(t *testing.T) {
 	doneChan <- struct{}{}
 }
 
+func TestTCPCollectionDisabled(t *testing.T) {
+	// Enable BPF-based network tracer with TCP disabled
+	config := NewDefaultConfig()
+	config.CollectTCPConns = false
+
+	tr, err := NewTracer(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tr.Start()
+	defer tr.Stop()
+
+	// Create TCP Server which sends back serverMessageSize bytes
+	server := NewTCPServer(func(c net.Conn) {
+		r := bufio.NewReader(c)
+		r.ReadBytes(byte('\n'))
+		c.Write(genPayload(serverMessageSize))
+		c.Close()
+	})
+	doneChan := make(chan struct{})
+	server.Run(doneChan)
+
+	// Connect to server
+	c, err := net.DialTimeout("tcp", server.address, 50*time.Millisecond)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Write clientMessageSize to server, and read response
+	if _, err = c.Write(genPayload(clientMessageSize)); err != nil {
+		t.Fatal(err)
+	}
+	r := bufio.NewReader(c)
+	r.ReadBytes(byte('\n'))
+
+	connections, err := tr.GetActiveConnections()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Confirm that we could not find connection created above
+	_, ok := findConnection(c.LocalAddr(), c.RemoteAddr(), connections)
+	assert.False(t, ok)
+
+	doneChan <- struct{}{}
+}
+
 func TestUDPSendAndReceive(t *testing.T) {
 	// Enable BPF-based network tracer
-	tr, err := NewTracer(DefaultConfig)
+	tr, err := NewTracer(NewDefaultConfig())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -164,6 +212,52 @@ func TestUDPSendAndReceive(t *testing.T) {
 	doneChan <- struct{}{}
 }
 
+func TestUDPDisabled(t *testing.T) {
+	// Enable BPF-based network tracer with UDP disabled
+	config := NewDefaultConfig()
+	config.CollectUDPConns = false
+
+	tr, err := NewTracer(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tr.Start()
+	defer tr.Stop()
+
+	// Create UDP Server which sends back serverMessageSize bytes
+	server := NewUDPServer(func(b []byte, n int) []byte {
+		return genPayload(serverMessageSize)
+	})
+
+	doneChan := make(chan struct{})
+	server.Run(doneChan, clientMessageSize)
+
+	// Connect to server
+	c, err := net.DialTimeout("udp", server.address, 50*time.Millisecond)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+
+	// Write clientMessageSize to server, and read response
+	if _, err = c.Write(genPayload(clientMessageSize)); err != nil {
+		t.Fatal(err)
+	}
+
+	c.Read(make([]byte, serverMessageSize))
+
+	// Iterate through active connections until we find connection created above, and confirm send + recv counts
+	connections, err := tr.GetActiveConnections()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, ok := findConnection(c.LocalAddr(), c.RemoteAddr(), connections)
+	assert.False(t, ok)
+
+	doneChan <- struct{}{}
+}
+
 func findConnection(l, r net.Addr, c *Connections) (*ConnectionStats, bool) {
 	for _, conn := range c.Conns {
 		localAddr := fmt.Sprintf("%s:%d", conn.Source, conn.SPort)
@@ -186,7 +280,7 @@ func BenchmarkUDPEcho(b *testing.B) {
 	runBenchtests(b, payloadSizesUDP, "", benchEchoUDP)
 
 	// Enable BPF-based network tracer
-	t, err := NewTracer(DefaultConfig)
+	t, err := NewTracer(NewDefaultConfig())
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -236,7 +330,7 @@ func BenchmarkTCPEcho(b *testing.B) {
 	runBenchtests(b, payloadSizesTCP, "", benchEchoTCP)
 
 	// Enable BPF-based network tracer
-	t, err := NewTracer(DefaultConfig)
+	t, err := NewTracer(NewDefaultConfig())
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -250,7 +344,7 @@ func BenchmarkTCPSend(b *testing.B) {
 	runBenchtests(b, payloadSizesTCP, "", benchSendTCP)
 
 	// Enable BPF-based network tracer
-	t, err := NewTracer(DefaultConfig)
+	t, err := NewTracer(NewDefaultConfig())
 	if err != nil {
 		b.Fatal(err)
 	}

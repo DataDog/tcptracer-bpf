@@ -63,6 +63,12 @@ const (
 	guessDaddrIPv6         = 6
 )
 
+// These constants should be in sync with the equivalent definitions in the ebpf program.
+const (
+	disableV6 C.__u8 = 0
+	enableV6         = 1
+)
+
 var whatString = map[C.__u64]string{
 	guessSaddr:     "source address",
 	guessDaddr:     "destination address",
@@ -174,18 +180,26 @@ func generateRandomIPv6Address() (addr [4]uint32) {
 // tcp_v{4,6}_connect kprobes get triggered and save the value at the current
 // offset in the eBPF map
 func tryCurrentOffset(status *tcpTracerStatus, expected *fieldValues, stop chan struct{}) error {
-	// for ipv6, we don't need the source port because we already guessed
-	// it doing ipv4 connections so we use a random destination address and
-	// try to connect to it
-	expected.daddrIPv6 = generateRandomIPv6Address()
+	// Are we guessing the IPv6 field?
+	if status.what == guessDaddrIPv6 {
+		expected.daddrIPv6 = generateRandomIPv6Address()
 
-	ip := ipv6FromUint32Arr(expected.daddrIPv6)
+		// For ipv6, we don't need the source port because we already guessed it doing ipv4 connections so
+		// we use a random destination address and try to connect to it.
+		expected.daddrIPv6 = generateRandomIPv6Address()
+		bindAddress := fmt.Sprintf("[%s]:9092", ipv6FromUint32Arr(expected.daddrIPv6))
 
-	bindAddress := fmt.Sprintf("%s:%d", listenIP, expected.dport)
-	if status.what != guessDaddrIPv6 {
-		// signal the server that we're about to connect, this will block until
-		// the channel is free so we don't overload the server
+		// Since we connect to a random IP, this will most likely fail. In the unlikely case where it connects
+		// successfully, we close the connection to avoid a leak.
+		if conn, err := net.DialTimeout("tcp6", bindAddress, 10*time.Millisecond); err == nil {
+			conn.Close()
+		}
+	} else { // Otherwise it must be source-able from the IPv4 fields
+		// Signal the server that we're about to connect, this will block until the channel is free so we don't
+		// overload the server
 		stop <- struct{}{}
+
+		bindAddress := fmt.Sprintf("%s:%d", listenIP, expected.dport)
 		conn, err := net.Dial("tcp4", bindAddress)
 		if err != nil {
 			return fmt.Errorf("error dialing %q: %v", bindAddress, err)
@@ -199,10 +213,8 @@ func tryCurrentOffset(status *tcpTracerStatus, expected *fieldValues, stop chan 
 
 		expected.sport = uint16(sport)
 
-		// set SO_LINGER to 0 so the connection state after closing is
-		// CLOSE instead of TIME_WAIT. In this way, they will disappear
-		// from the conntrack table after around 10 seconds instead of 2
-		// minutes
+		// Set SO_LINGER to 0 so the connection state after closing is CLOSE instead of TIME_WAIT.
+		// In this way, they will disappear from the conntrack table after around 10 seconds instead of 2 mins
 		if tcpConn, ok := conn.(*net.TCPConn); ok {
 			tcpConn.SetLinger(0)
 		} else {
@@ -210,14 +222,6 @@ func tryCurrentOffset(status *tcpTracerStatus, expected *fieldValues, stop chan 
 		}
 
 		conn.Close()
-	} else {
-		conn, err := net.DialTimeout("tcp6", fmt.Sprintf("[%s]:9092", ip), 10*time.Millisecond)
-		// Since we connect to a random IP, this will most likely fail.
-		// In the unlikely case where it connects successfully, we close
-		// the connection to avoid a leak.
-		if err == nil {
-			conn.Close()
-		}
 	}
 
 	return nil
@@ -318,6 +322,14 @@ func checkAndUpdateCurrentOffset(module *elf.Module, mp *elf.Map, status *tcpTra
 	return nil
 }
 
+func setReadyState(m *elf.Module, mp *elf.Map, status *tcpTracerStatus) error {
+	status.state = stateReady
+	if err := m.UpdateElement(mp, unsafe.Pointer(&zero), unsafe.Pointer(status), 0); err != nil {
+		return fmt.Errorf("error updating tcptracer_status: %v", err)
+	}
+	return nil
+}
+
 // guess expects elf.Module to hold a tcptracer-bpf object and initializes the
 // tracer by guessing the right struct sock kernel struct offsets. Results are
 // stored in the `tcptracer_status` map as used by the module.
@@ -332,13 +344,13 @@ func checkAndUpdateCurrentOffset(module *elf.Module, mp *elf.Map, status *tcpTra
 // check that value against the expected value of the field, advancing the
 // offset and repeating the process until we find the value we expect. Then, we
 // guess the next field.
-func guess(b *elf.Module) error {
+func guess(m *elf.Module, cfg *Config) error {
 	currentNetns, err := ownNetNS()
 	if err != nil {
 		return fmt.Errorf("error getting current netns: %v", err)
 	}
 
-	mp := b.Map("tcptracer_status")
+	mp := m.Map(string(TCPTracerStatusMap))
 
 	// pid & tid must not change during the guessing work: the communication
 	// between ebpf and userspace relies on it
@@ -356,12 +368,16 @@ func guess(b *elf.Module) error {
 	}
 
 	status := &tcpTracerStatus{
-		state: stateChecking,
-		proc:  C.struct_proc_t{comm: cProcName},
+		state:        stateChecking,
+		proc:         C.struct_proc_t{comm: cProcName},
+		ipv6_enabled: enableV6,
+	}
+	if !cfg.CollectIPv6Conns {
+		status.ipv6_enabled = disableV6
 	}
 
 	// if we already have the offsets, just return
-	err = b.LookupElement(mp, unsafe.Pointer(&zero), unsafe.Pointer(status))
+	err = m.LookupElement(mp, unsafe.Pointer(&zero), unsafe.Pointer(status))
 	if err == nil && status.state == stateReady {
 		return nil
 	}
@@ -373,7 +389,7 @@ func guess(b *elf.Module) error {
 	defer close(stop)
 
 	// initialize map
-	if err := b.UpdateElement(mp, unsafe.Pointer(&zero), unsafe.Pointer(status), 0); err != nil {
+	if err := m.UpdateElement(mp, unsafe.Pointer(&zero), unsafe.Pointer(status), 0); err != nil {
 		return fmt.Errorf("error initializing tcptracer_status map: %v", err)
 	}
 
@@ -389,18 +405,24 @@ func guess(b *elf.Module) error {
 		family: syscall.AF_INET,
 	}
 
-	// if the kretprobe for tcp_v4_connect() is configured with a too-low
-	// maxactive, some kretprobe might be missing. In this case, we detect
-	// it and try again.
-	// See https://github.com/weaveworks/tcptracer-bpf/issues/24
-	var maxRetries int = 100
+	// If the kretprobe for tcp_v4_connect() is configured with a too-low maxactive, some kretprobe might be missing.
+	// In this case, we detect it and try again. See: https://github.com/weaveworks/tcptracer-bpf/issues/24
+	maxRetries := 100
 
 	for status.state != stateReady {
+		// If IPv6 is not enabled, then set state to ready as its the last field we guess
+		if status.what == guessDaddrIPv6 && !cfg.CollectIPv6Conns {
+			if err := setReadyState(m, mp, status); err != nil {
+				return err
+			}
+			continue
+		}
+
 		if err := tryCurrentOffset(status, expected, stop); err != nil {
 			return err
 		}
 
-		if err := checkAndUpdateCurrentOffset(b, mp, status, expected, &maxRetries); err != nil {
+		if err := checkAndUpdateCurrentOffset(m, mp, status, expected, &maxRetries); err != nil {
 			return err
 		}
 
@@ -414,6 +436,5 @@ func guess(b *elf.Module) error {
 			return fmt.Errorf("overflow while guessing %v, bailing out", whatString[status.what])
 		}
 	}
-
 	return nil
 }

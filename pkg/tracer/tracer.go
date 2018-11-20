@@ -15,14 +15,6 @@ import (
 */
 import "C"
 
-const (
-	v4UDPMapName           = "udp_stats_ipv4"
-	v6UDPMapName           = "udp_stats_ipv6"
-	v4TCPMapName           = "tcp_stats_ipv4"
-	v6TCPMapName           = "tcp_stats_ipv6"
-	latestTimestampMapName = "latest_ts"
-)
-
 var (
 	// Feature versions sourced from: https://github.com/iovisor/bcc/blob/master/docs/kernel-versions.md
 	// Minimum kernel version -> max(3.15 - eBPF,
@@ -67,22 +59,28 @@ func NewTracer(config *Config) (*Tracer, error) {
 		return nil, err
 	}
 
+	// TODO: This currently loads all defined BPF maps in the ELF file. we should load only the maps
+	//       for connection types + families that are enabled.
 	err = m.Load(nil)
 	if err != nil {
 		return nil, err
 	}
 
-	// TODO: Only enable kprobes for traffic collection defined in config
-	err = m.EnableKprobes(maxActive)
-	if err != nil {
-		return nil, err
+	// Use the config to determine what kernel probes should be enabled
+	enabledProbes := config.EnabledKProbes()
+	for k := range m.IterKprobes() {
+		if _, ok := enabledProbes[KProbeName(k.Name)]; ok {
+			if err = m.EnableKprobe(k.Name, maxActive); err != nil {
+				return nil, err
+			}
+		}
 	}
 
-	if err := initialize(m); err != nil {
-		return nil, fmt.Errorf("failed to init module: %s", err)
+	// TODO: Disable TCPv{4,6} connect kernel probes once offsets have been figured out.
+	if err := guess(m, config); err != nil {
+		return nil, fmt.Errorf("failed to init module: error guessing offsets: %v", err)
 	}
 
-	// TODO: Improve performance by detaching unnecessary kprobes, once offsets have been figured out in initialize()
 	return &Tracer{m: m, config: config}, nil
 }
 
@@ -96,16 +94,22 @@ func (t *Tracer) Stop() {
 
 func (t *Tracer) GetActiveConnections() (*Connections, error) {
 	conns := make([]ConnectionStats, 0)
+
 	if t.config.CollectTCPConns {
 		v4, err := t.getTCPv4Connections()
 		if err != nil {
 			return nil, err
 		}
-		v6, err := t.getTCPv6Connections()
-		if err != nil {
-			return nil, err
+
+		if t.config.CollectIPv6Conns {
+			v6, err := t.getTCPv6Connections()
+			if err != nil {
+				return nil, err
+			}
+			conns = append(conns, append(v4, v6...)...)
+		} else {
+			conns = append(conns, v4...)
 		}
-		conns = append(conns, append(v4, v6...)...)
 	}
 
 	if t.config.CollectUDPConns {
@@ -113,17 +117,22 @@ func (t *Tracer) GetActiveConnections() (*Connections, error) {
 		if err != nil {
 			return nil, err
 		}
-		v6, err := t.getUDPv6Connections()
-		if err != nil {
-			return nil, err
+
+		if t.config.CollectIPv6Conns {
+			v6, err := t.getUDPv6Connections()
+			if err != nil {
+				return nil, err
+			}
+			conns = append(conns, append(v4, v6...)...)
+		} else {
+			conns = append(conns, v4...)
 		}
-		conns = append(conns, append(v4, v6...)...)
 	}
 	return &Connections{Conns: conns}, nil
 }
 
 func (t *Tracer) getUDPv4Connections() ([]ConnectionStats, error) {
-	mp, err := t.getMap(v4UDPMapName)
+	mp, err := t.getMap(UDPv4Map)
 	if err != nil {
 		return nil, err
 	}
@@ -131,9 +140,7 @@ func (t *Tracer) getUDPv4Connections() ([]ConnectionStats, error) {
 	latestTime, ok, err := t.getLatestTimestamp()
 	if err != nil {
 		return nil, err
-	}
-
-	if !ok { // if we haven't yet captured any timestamps, there can be no UDP packets
+	} else if !ok { // if we haven't yet captured any timestamps, there can be no UDP packets
 		return nil, nil
 	}
 
@@ -161,7 +168,7 @@ func (t *Tracer) getUDPv4Connections() ([]ConnectionStats, error) {
 }
 
 func (t *Tracer) getUDPv6Connections() ([]ConnectionStats, error) {
-	mp, err := t.getMap(v6UDPMapName)
+	mp, err := t.getMap(UDPv6Map)
 	if err != nil {
 		return nil, err
 	}
@@ -169,9 +176,7 @@ func (t *Tracer) getUDPv6Connections() ([]ConnectionStats, error) {
 	latestTime, ok, err := t.getLatestTimestamp()
 	if err != nil {
 		return nil, err
-	}
-
-	if !ok { // if no timestamps have been captured there can be no UDP packets
+	} else if !ok { // if no timestamps have been captured there can be no UDP packets
 		return nil, nil
 	}
 
@@ -199,7 +204,7 @@ func (t *Tracer) getUDPv6Connections() ([]ConnectionStats, error) {
 }
 
 func (t *Tracer) getTCPv4Connections() ([]ConnectionStats, error) {
-	mp, err := t.getMap(v4TCPMapName)
+	mp, err := t.getMap(TCPv4Map)
 	if err != nil {
 		return nil, err
 	}
@@ -238,7 +243,7 @@ func (t *Tracer) getTCPv4Connections() ([]ConnectionStats, error) {
 }
 
 func (t *Tracer) getTCPv6Connections() ([]ConnectionStats, error) {
-	mp, err := t.getMap(v6TCPMapName)
+	mp, err := t.getMap(TCPv6Map)
 	if err != nil {
 		return nil, err
 	}
@@ -282,7 +287,7 @@ func (t *Tracer) getTCPv6Connections() ([]ConnectionStats, error) {
 // case if the eBPF module has just started), the second return value will be
 // false.
 func (t *Tracer) getLatestTimestamp() (int64, bool, error) {
-	tsMp, err := t.getMap(latestTimestampMapName)
+	tsMp, err := t.getMap(LatestTimestampMap)
 	if err != nil {
 		return 0, false, err
 	}
@@ -296,19 +301,12 @@ func (t *Tracer) getLatestTimestamp() (int64, bool, error) {
 	return latestTime, true, nil
 }
 
-func (t *Tracer) getMap(mapName string) (*bpflib.Map, error) {
-	mp := t.m.Map(mapName)
+func (t *Tracer) getMap(name BPFMapName) (*bpflib.Map, error) {
+	mp := t.m.Map(string(name))
 	if mp == nil {
-		return nil, fmt.Errorf("no map with name %s", mapName)
+		return nil, fmt.Errorf("no map with name %s", name)
 	}
 	return mp, nil
-}
-
-func initialize(m *bpflib.Module) error {
-	if err := guess(m); err != nil {
-		return fmt.Errorf("error guessing offsets: %v", err)
-	}
-	return nil
 }
 
 func loadBPFModule() (*bpflib.Module, error) {

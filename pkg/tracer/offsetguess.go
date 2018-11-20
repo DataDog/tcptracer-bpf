@@ -63,6 +63,12 @@ const (
 	guessDaddrIPv6         = 6
 )
 
+// These constants should be in sync with the equivalent definitions in the ebpf program.
+const (
+	disableV6 C.__u8 = 0
+	enableV6         = 1
+)
+
 var whatString = map[C.__u64]string{
 	guessSaddr:     "source address",
 	guessDaddr:     "destination address",
@@ -353,9 +359,17 @@ func guess(b *elf.Module, cfg *Config) error {
 		cProcName[i] = C.char(processName[i])
 	}
 
+	enableV6 := func(enabled bool) C.__u8 {
+		if enabled {
+			return enableV6
+		}
+		return disableV6
+	}(cfg.TraceIPv6Connections)
+
 	status := &tcpTracerStatus{
-		state: stateChecking,
-		proc:  C.struct_proc_t{comm: cProcName},
+		state:        stateChecking,
+		proc:         C.struct_proc_t{comm: cProcName},
+		ipv6_enabled: enableV6,
 	}
 
 	// if we already have the offsets, just return
@@ -393,7 +407,7 @@ func guess(b *elf.Module, cfg *Config) error {
 
 	for status.state != stateReady {
 		// If IPv6 is not enabled, then set state to ready as its the last field we guess
-		if !cfg.TraceIPv6Connections && status.what == guessDaddrIPv6 {
+		if status.what == guessDaddrIPv6 && !cfg.TraceIPv6Connections {
 			status.state = stateReady
 			continue
 		}

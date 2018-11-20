@@ -212,6 +212,7 @@ static int are_offsets_ready_v4(struct tcptracer_status_t *status, struct sock *
 	new_status.dport = status->dport;
 	new_status.netns = status->netns;
 	new_status.family = status->family;
+	new_status.ipv6_enabled = status->ipv6_enabled;
 
 	bpf_probe_read(&new_status.proc.comm, sizeof(proc.comm), proc.comm);
 
@@ -323,6 +324,7 @@ static int are_offsets_ready_v6(struct tcptracer_status_t *status, struct sock *
 	new_status.dport = status->dport;
 	new_status.netns = status->netns;
 	new_status.family = status->family;
+	new_status.ipv6_enabled = status->ipv6_enabled;
 
 	bpf_probe_read(&new_status.proc.comm, sizeof(proc.comm), proc.comm);
 
@@ -356,6 +358,11 @@ static bool check_family(struct sock *sk, struct tcptracer_status_t *status, u16
 	u16 family = 0;
 	bpf_probe_read(&family, sizeof(u16), ((char *) sk) + status->offset_family);
 	return family == expected_family;
+}
+
+__attribute__((always_inline))
+static bool is_ipv6_enabled(struct tcptracer_status_t *status) {
+	return status->ipv6_enabled == TCPTRACER_IPV6_ENABLED;
 }
 
 __attribute__((always_inline))
@@ -469,7 +476,7 @@ static int increment_tcp_stats(struct sock *sk, struct tcptracer_status_t *statu
 			};
 			bpf_map_update_elem(&tcp_stats_ipv4, &t, &s, BPF_ANY);
 		}
-	} else if (check_family(sk, status, AF_INET6)) {
+	} else if (is_ipv6_enabled(status) && check_family(sk, status, AF_INET6)) {
 		if (!are_offsets_ready_v6(status, sk, pid)) {
 			return 0;
 		}
@@ -572,7 +579,7 @@ static int increment_udp_stats(struct sock *sk,
 			};
 			bpf_map_update_elem(&udp_stats_ipv4, &t, &s, BPF_ANY);
 		}
-	} else if (check_family(sk, status, AF_INET6)) {
+	} else if (is_ipv6_enabled(status) && check_family(sk, status, AF_INET6)) {
 		if (!are_offsets_ready_v6(status, sk, pid_tgid)) {
 			return 0;
 		}
@@ -794,7 +801,7 @@ int kprobe__tcp_close(struct pt_regs *ctx) {
 
 		// Delete this connection from our stats map
 		bpf_map_delete_elem(&tcp_stats_ipv4, &t);
-	} else if (check_family(sk, status, AF_INET6)) {
+	} else if (is_ipv6_enabled(status) && check_family(sk, status, AF_INET6)) {
 		struct ipv6_tuple_t t = {};
 		if (!read_ipv6_tuple(&t, status, sk)) {
 			return 0;

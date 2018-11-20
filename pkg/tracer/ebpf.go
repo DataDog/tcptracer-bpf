@@ -16,3 +16,13 @@ const (
 	UDPRecvMsg       KProbeName = "kprobe/udp_recvmsg"
 	UDPRecvMsgReturn KProbeName = "kretprobe/udp_recvmsg"
 )
+
+type BPFMapName string
+
+const (
+	UDPv4Map           BPFMapName = "udp_stats_ipv4"
+	UDPv6Map           BPFMapName = "udp_stats_ipv6"
+	TCPv4Map           BPFMapName = "tcp_stats_ipv4"
+	TCPv6Map           BPFMapName = "tcp_stats_ipv6"
+	LatestTimestampMap BPFMapName = "latest_ts"
+)

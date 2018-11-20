@@ -322,6 +322,14 @@ func checkAndUpdateCurrentOffset(module *elf.Module, mp *elf.Map, status *tcpTra
 	return nil
 }
 
+func setReadyState(m *elf.Module, mp *elf.Map, status *tcpTracerStatus) error {
+	status.state = stateReady
+	if err := m.UpdateElement(mp, unsafe.Pointer(&zero), unsafe.Pointer(status), 0); err != nil {
+		return fmt.Errorf("error updating tcptracer_status: %v", err)
+	}
+	return nil
+}
+
 // guess expects elf.Module to hold a tcptracer-bpf object and initializes the
 // tracer by guessing the right struct sock kernel struct offsets. Results are
 // stored in the `tcptracer_status` map as used by the module.
@@ -336,13 +344,13 @@ func checkAndUpdateCurrentOffset(module *elf.Module, mp *elf.Map, status *tcpTra
 // check that value against the expected value of the field, advancing the
 // offset and repeating the process until we find the value we expect. Then, we
 // guess the next field.
-func guess(b *elf.Module, cfg *Config) error {
+func guess(m *elf.Module, cfg *Config) error {
 	currentNetns, err := ownNetNS()
 	if err != nil {
 		return fmt.Errorf("error getting current netns: %v", err)
 	}
 
-	mp := b.Map("tcptracer_status")
+	mp := m.Map(string(TCPTracerStatusMap))
 
 	// pid & tid must not change during the guessing work: the communication
 	// between ebpf and userspace relies on it
@@ -373,7 +381,7 @@ func guess(b *elf.Module, cfg *Config) error {
 	}
 
 	// if we already have the offsets, just return
-	err = b.LookupElement(mp, unsafe.Pointer(&zero), unsafe.Pointer(status))
+	err = m.LookupElement(mp, unsafe.Pointer(&zero), unsafe.Pointer(status))
 	if err == nil && status.state == stateReady {
 		return nil
 	}
@@ -385,7 +393,7 @@ func guess(b *elf.Module, cfg *Config) error {
 	defer close(stop)
 
 	// initialize map
-	if err := b.UpdateElement(mp, unsafe.Pointer(&zero), unsafe.Pointer(status), 0); err != nil {
+	if err := m.UpdateElement(mp, unsafe.Pointer(&zero), unsafe.Pointer(status), 0); err != nil {
 		return fmt.Errorf("error initializing tcptracer_status map: %v", err)
 	}
 
@@ -408,7 +416,9 @@ func guess(b *elf.Module, cfg *Config) error {
 	for status.state != stateReady {
 		// If IPv6 is not enabled, then set state to ready as its the last field we guess
 		if status.what == guessDaddrIPv6 && !cfg.TraceIPv6Connections {
-			status.state = stateReady
+			if err := setReadyState(m, mp, status); err != nil {
+				return err
+			}
 			continue
 		}
 
@@ -416,7 +426,7 @@ func guess(b *elf.Module, cfg *Config) error {
 			return err
 		}
 
-		if err := checkAndUpdateCurrentOffset(b, mp, status, expected, &maxRetries); err != nil {
+		if err := checkAndUpdateCurrentOffset(m, mp, status, expected, &maxRetries); err != nil {
 			return err
 		}
 

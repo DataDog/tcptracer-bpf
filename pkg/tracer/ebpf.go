@@ -25,4 +25,5 @@ const (
 	TCPv4Map           BPFMapName = "tcp_stats_ipv4"
 	TCPv6Map           BPFMapName = "tcp_stats_ipv6"
 	LatestTimestampMap BPFMapName = "latest_ts"
+	TCPTracerStatusMap BPFMapName = "tcptracer_status"
 )

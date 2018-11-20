@@ -367,17 +367,13 @@ func guess(m *elf.Module, cfg *Config) error {
 		cProcName[i] = C.char(processName[i])
 	}
 
-	enableV6 := func(enabled bool) C.__u8 {
-		if enabled {
-			return enableV6
-		}
-		return disableV6
-	}(cfg.CollectIPv6Conns)
-
 	status := &tcpTracerStatus{
 		state:        stateChecking,
 		proc:         C.struct_proc_t{comm: cProcName},
 		ipv6_enabled: enableV6,
+	}
+	if !cfg.CollectIPv6Conns {
+		status.ipv6_enabled = disableV6
 	}
 
 	// if we already have the offsets, just return

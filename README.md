@@ -1,3 +1,8 @@
+# This repository is no longer active.
+
+Due to a number of breaking changes with the existing upstream tcptracer-bpf, we've 
+moved our fork into the [`ebpf` subdirectory of datadog-process-agent](https://github.com/DataDog/datadog-process-agent/tree/master/ebpf).
+
 # tcptracer-bpf
 
 tcptracer-bpf is an eBPF program using kprobes to trace TCP events (connect,
@@ -24,47 +29,3 @@ not directly iterate over the possible offsets. It is instead controlled from
 userspace by the Go library using a state machine.
 
 See `tests/tracer.go` for an example how to use tcptracer-bpf.
-
-## Build the elf object
-
-```
-make
-```
-
-The object file can be found in `ebpf/tcptracer-ebpf.o`.
-
-## Test
-
-```
-cd tests
-make
-sudo ./run
-```
-
-## Vendoring
-
-We use [gvt](https://github.com/FiloSottile/gvt).
-
-## <a name="help"></a>Getting Help
-
-If you have any questions about, feedback for or problems with `tcptracer-bpf`:
-
-- Invite yourself to the <a href="https://weaveworks.github.io/community-slack/" target="_blank"> #weave-community </a> slack channel.
-- Ask a question on the <a href="https://weave-community.slack.com/messages/general/"> #weave-community</a> slack channel.
-- Send an email to <a href="mailto:weave-users@weave.works">weave-users@weave.works</a>
-- <a href="https://github.com/weaveworks/tcptracer-bpf/issues/new">File an issue.</a>
-
-Your feedback is always welcome!
-
-
-## Development
-
-The easiest way to build and test is inside a Vagrant VM.  You can provision
-the VM by running `./tools/dev_setup.sh` and SSHing into the VM with `vagrant
-ssh` (`vagrant` must be installed.)
-
-The VM will mount your local `$GOPATH`, so you can edit source code with your editor of choice.
-
-`make run-nettop` will run a small testing program which
-periodically prints statistics about TCP/UDP traffic inside the VM.
-
